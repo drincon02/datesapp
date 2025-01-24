@@ -98,6 +98,26 @@ pub mod db {
             }
         }
 
+        pub async fn accept_relationship(&self, user_id: u32, relationship_id: u32) -> Result<bool, sqlx::Error> {
+            let conn = self.dbpool.acquire().await;
+            match conn {
+                Err(e) => Err(e),
+                Ok(mut connection) => {
+                    let updated_rows = sqlx::query("update relationship_users set confirmed = 1 where user_id = ? and relationship_id = ?").bind(user_id)
+                    .bind(relationship_id).execute(&mut *connection).await?;
+
+                    if updated_rows.rows_affected() != 1 {
+                        return Err(sqlx::Error::RowNotFound);
+                    }
+                    else {
+                        Ok(true)
+                    }
+                    
+
+                }
+            }
+        }
+
         pub async fn create_relationship(&self, relationship_data:CreateRelationship) -> Result<Relationship, sqlx::Error> {
             let conn = self.dbpool.acquire().await;
             match conn {

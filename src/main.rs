@@ -1,4 +1,4 @@
-use axum::{extract::State, http::StatusCode, routing::post, Json, Router};
+use axum::{extract::{Path, State}, http::StatusCode, routing::{post, put}, Json, Router};
 //use axum_macros::debug_handler;
 use datesapp::db::{CreateRelationship, CreateUserData, Db, Relationship };
 use bcrypt::{DEFAULT_COST, hash, verify};
@@ -11,10 +11,19 @@ async fn main() {
     let app: Router = Router::new().route("/createuser", post(route_create_user))
                     .route("/auth", post(route_auth_user))
                     .route("/createrelation", post(route_create_relationship))
+                    .route("/accept_relationship", put(route_accept_relationship))
                     .with_state(dconn);
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
     axum::serve(listener, app).await.unwrap();
 }
+
+async fn route_accept_relationship(State(stateconn): State<Db>, Path((user_id, relationship_id)): Path<(u32, u32)>) -> (StatusCode, String) {
+    match stateconn.accept_relationship(user_id,relationship_id).await {
+        Err(e) => (StatusCode::UNPROCESSABLE_ENTITY, format!("Error: {}", e)),
+        Ok(_) => (StatusCode::OK, String::from("Relationship accepted succesfully"))
+    }
+}
+
 async fn route_create_relationship(State(stateconn): State<Db>, Json(payload): Json<CreateRelationship>) -> (StatusCode, Json<Relationship>) {
     // Return custom error implementing into respone in the near future
     match payload.validate_struct().await {
