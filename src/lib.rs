@@ -1,9 +1,11 @@
 mod dbconn;
 
 pub mod db {
+    use std::ops::DerefMut;
     use serde::{Deserialize, Serialize};
+    use sqlx::pool::PoolConnection;
     use sqlx::sqlite::SqlitePool;
-    use sqlx::Row;
+    use sqlx::{Row, Sqlite};
     use crate::dbconn::dbconnection::connection_pool;
 
     #[derive(Clone)]
@@ -98,6 +100,50 @@ pub mod db {
             }
         }
 
+        pub async fn delete_relationship(&self, user_id: u32, relationship_id: u32) -> Result<bool, sqlx::Error> {
+            let conn = self.dbpool.acquire().await;
+            match conn {
+                Err(e) => Err(e),
+                Ok(mut connection) => {
+                    let deleted_rows = sqlx::query("delete from relationship where id = (select relationship_id from relationship_users where user_id = ? and relationship_id = ?)")
+                    .bind(user_id).bind(relationship_id).execute(&mut *connection).await?;
+
+                    let _ = connection.close().await;
+
+                    if deleted_rows.rows_affected() < 1 {
+                        return Err(sqlx::Error::RowNotFound);
+                    }
+                    else {
+                        Ok(true)
+                    }
+ 
+                }
+            }
+ 
+        }
+
+        pub async fn update_relationship_status(&self, conn: &mut PoolConnection<Sqlite>, relationship_id: u32) -> Result<bool, sqlx::Error> {
+            let change_status = 
+            sqlx::query("select min(confirmed) as change from relationship_users where relationship_id = ? group by relationship_id")
+            .bind(relationship_id).fetch_one(conn.deref_mut()).await?;
+            let change_binary: u32 = change_status.try_get("change")?;
+            if change_binary == 1 {
+                let updated_rows = sqlx::query("update relationship set status = 'active' where id = ?").bind(relationship_id).execute(conn.deref_mut()).await?;
+                if updated_rows.rows_affected() < 1 {
+                    return Err(sqlx::Error::RowNotFound);
+                }
+                else {
+                    Ok(true)
+                }
+            }
+            else {
+                Ok(false)
+            }
+
+
+
+        }
+
         pub async fn accept_relationship(&self, user_id: u32, relationship_id: u32) -> Result<bool, sqlx::Error> {
             let conn = self.dbpool.acquire().await;
             match conn {
@@ -106,11 +152,15 @@ pub mod db {
                     let updated_rows = sqlx::query("update relationship_users set confirmed = 1 where user_id = ? and relationship_id = ?").bind(user_id)
                     .bind(relationship_id).execute(&mut *connection).await?;
 
-                    if updated_rows.rows_affected() != 1 {
+                    let change_binary = self.update_relationship_status(&mut connection, relationship_id).await?;
+                    
+                    let _ = connection.close().await;
+
+                    if updated_rows.rows_affected() < 1 {
                         return Err(sqlx::Error::RowNotFound);
                     }
                     else {
-                        Ok(true)
+                        Ok(change_binary)
                     }
                     
 
@@ -138,12 +188,12 @@ pub mod db {
                     let new_relationship_user = sqlx::query("insert into relationship_users (user_id, relationship_id, confirmed) values (?, ?, 1)")
                     .bind(relationship_data.user_creator).bind(new_row.id).execute(&mut *connection).await?;
 
-                    if new_relationship_user.rows_affected() != 1 {
+                    if new_relationship_user.rows_affected() < 1 {
                         return Err(sqlx::Error::RowNotFound);
                     }
                     else {
                         for e in relationship_data.proposed_users {
-                            let inserted_query = sqlx::query("insert into relationship_user (user_id, relationship_id, confirmed) values ((select users.id from users where users.username = ?), ?, 0)")
+                            let inserted_query = sqlx::query("insert into relationship_users (user_id, relationship_id, confirmed) values ((select users.id from users where users.username = ?), ?, 0)")
                             .bind(e).bind(new_row.id).execute(&mut *connection).await?;
                             if inserted_query.rows_affected() != 1 {
                                 return Err(sqlx::Error::RowNotFound);
