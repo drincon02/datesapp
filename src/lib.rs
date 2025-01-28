@@ -13,6 +13,7 @@ pub mod db {
         dbpool: SqlitePool
     }
 
+
     #[derive(Deserialize)]
     pub struct CreateUserData {
         pub username: String,
@@ -27,7 +28,8 @@ pub mod db {
         user_creator: i32,
         proposed_users: Vec<String>
     }
-
+    
+    
     impl CreateRelationship {
         pub async fn validate_struct(&self) -> Result<bool, &str> {
             let _ = self.validate_name().await?;
@@ -35,7 +37,7 @@ pub mod db {
             let _ = self.validate_color().await?;
             Ok(true)
         }
-
+        
         async fn validate_description(&self) -> Result<bool, &str> {
             match &self.description {
                 None => Ok(true),
@@ -69,7 +71,7 @@ pub mod db {
                     }
                 }
             }
-
+            
         }
         async fn validate_name(&self) -> Result<bool, &str> {
             let num_characters = self.name.chars().count();
@@ -79,19 +81,87 @@ pub mod db {
             else {
                 Ok(true)
             }
-
+            
         }
     }
 
-    #[derive(Serialize)]
-    pub struct Relationship {
-        pub id: i32,
-        pub name: String,
-        pub color: String,
-        pub description: String,
-        pub status: String
+
+    #[derive(Deserialize)]
+    pub struct EditRelationship{
+        id: u32,
+        name: String,
+        color: Option<String>, 
+        description: Option<String>,
     }
 
+    impl EditRelationship {
+        pub async fn validate_struct(&self) -> Result<bool, &str> {
+            let _ = self.validate_name().await?;
+            let _ = self.validate_description().await?;
+            let _ = self.validate_color().await?;
+            Ok(true)
+        }
+        async fn validate_description(&self) -> Result<bool, &str> {
+            match &self.description {
+                None => Ok(true),
+                Some(description) => {
+                    let num_char = description.chars().count();
+                    if num_char > 300 {
+                        Err("Description too long")
+                    }
+                    else {
+                        Ok(true)
+                    }
+                }
+            }
+        }
+        async fn validate_color(&self) -> Result<bool, &str> {
+            match &self.color {
+                None => Ok(true),
+                Some(color_str) => {
+                    let first_char = &color_str.chars().next().unwrap();
+                    if *first_char != '#' {
+                        Err("Color is not an acceptable hex color")
+                    } 
+                    else {
+                        let char_number = &color_str.chars().count();
+                        if (*char_number == 4) | (*char_number == 7) {
+                            Ok(true)
+                        }
+                        else {
+                            Err("Color is not an acceptable hex color")
+                        }
+                    }
+                }
+            }
+            
+        }
+        async fn validate_name(&self) -> Result<bool, &str> {
+            let num_characters = self.name.chars().count();
+            if num_characters > 30 {
+                Err("Number of characters of name exceed limit")
+            }
+            else {
+                Ok(true)
+            }
+        }
+ 
+    }
+
+    #[derive(Serialize)]
+    pub struct MultipleRelationship {
+        data: Vec<Relationship>
+    }
+    
+    #[derive(sqlx::FromRow, Serialize)]
+    pub struct Relationship {
+        id: i32,
+        name: String,
+        color: String,
+        description: String,
+        status: String
+    }
+    
     impl Db {
         pub async fn new() -> Db {
             let conn_pool = connection_pool();
@@ -99,6 +169,46 @@ pub mod db {
                 dbpool: conn_pool.await
             }
         }
+
+        pub async fn get_relationships(&self, user_id: u32) -> Result<MultipleRelationship, sqlx::Error> {
+            let conn = self.dbpool.acquire().await;
+            match conn {
+                Ok(mut connection) => {
+                    let db_rows : Vec<Relationship> = sqlx::query_as("select id, name, color, description, status from relationship inner join relationship_users on relationship_id = relationship_users.relationship_id where relationship_users.user_id = ?")
+                    .bind(user_id).fetch_all(&mut *connection).await?;
+                    
+                    let result_row = MultipleRelationship {
+                        data: db_rows
+                    };
+                    Ok(result_row)
+                },
+                Err(e) => Err(e)
+        }
+    }
+
+        pub async fn edit_relationship(&self, relationship_data: EditRelationship) -> Result<Relationship, sqlx::Error> {
+            let conn = self.dbpool.acquire().await;
+            match conn {
+                Ok(mut connection) => {
+                    // Update relationship
+                    let new_db_row = sqlx::query("update relationship set name = ?, color = ?, description = ? where id = ? returning id, name, color, description, status")
+                    .bind(relationship_data.name).bind(relationship_data.color)
+                    .bind(relationship_data.description).bind(relationship_data.id).fetch_one(&mut *connection).await?;
+                    
+                    let new_row = Relationship {
+                        id: new_db_row.try_get("id")?,
+                        name: new_db_row.try_get("name")?,
+                        color:new_db_row.try_get("color")?,
+                        description:new_db_row.try_get("description")?,
+                        status:new_db_row.try_get("status")?
+                    };
+
+                    Ok(new_row)
+                },
+                Err(err) => Err(err)
+            }
+        }
+
 
         pub async fn delete_relationship(&self, user_id: u32, relationship_id: u32) -> Result<bool, sqlx::Error> {
             let conn = self.dbpool.acquire().await;

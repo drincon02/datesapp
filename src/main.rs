@@ -1,6 +1,6 @@
-use axum::{extract::{Query, State}, http::StatusCode, routing::{delete, post, get}, Json, Router};
+use axum::{extract::{Query, State}, http::StatusCode, routing::{delete, get, post, put}, Json, Router};
 //use axum_macros::debug_handler;
-use datesapp::db::{CreateRelationship, CreateUserData, Db, Relationship };
+use datesapp::db::{CreateRelationship, EditRelationship, CreateUserData, Db, Relationship, MultipleRelationship};
 use bcrypt::{DEFAULT_COST, hash, verify};
 use serde::Deserialize;
 // use datesapp::
@@ -20,10 +20,29 @@ async fn main() {
                     .route("/auth", post(route_auth_user))
                     .route("/createrelation", post(route_create_relationship))
                     .route("/accept-relationship", get(route_accept_relationship))
+                    .route("/edit-relationship", put(route_edit_relationship))
                     .route("/delete-relationship", delete(route_delete_relationship))
+                    .route("/get-relationship", get(route_get_relationship))
                     .with_state(dconn);
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
     axum::serve(listener, app).await.unwrap();
+}
+
+async fn route_get_relationship(State(stateconn): State<Db>, user_id: Query<u32>) -> (StatusCode, Json<MultipleRelationship>) {
+    let result = stateconn.get_relationships(user_id.0).await.unwrap();
+    (StatusCode::OK, Json(result))
+}
+
+async fn route_edit_relationship(State(stateconn): State<Db>, Json(payload): Json<EditRelationship>) -> (StatusCode, Json<Relationship>) {
+    match payload.validate_struct().await {
+        Err(e) => panic!("{}", e),
+        Ok(_) => {
+            match stateconn.edit_relationship(payload).await {
+                Err(e) => panic!("{}", e), //(StatusCode::UNPROCESSABLE_ENTITY, format!("Error: {}", e)),
+                Ok(data) => (StatusCode::OK, Json(data))
+            }
+        }
+    }
 }
 
 async fn route_accept_relationship(State(stateconn): State<Db>, query_param: Query<RelationshipQuery>) -> (StatusCode, String) {
